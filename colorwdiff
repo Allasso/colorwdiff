@@ -1,0 +1,363 @@
+#!/usr/bin/perl
+
+use strict;
+use Time::HiRes qw( time );
+use File::Basename;
+use Cwd 'abs_path';
+
+## Globals:
+
+my $USAGE = "  Usage:
+
+  diff file1 file2 | colorwdiff [option(s)]
+  diff -U 3 file1 file2 | colorwdiff
+  diff file1 file2 | colorwdiff | less -R
+
+  Options:
+
+  -nc         do not colorize, only show [--], {++} wrappers
+  -w          retain [--], {++} wrappers when colorizing
+  -word       break at word boundaries (default breaks at \\s\\S, \\S\\s boundaries)
+  -nohtml     don't treat html tags as atomic words (default does)
+  -noarrows   suppress <, > flags when using normal diff (always prints file1|file2 divider)
+  -et         display elapsed time when script exits
+  -h          show this help menu and exit
+
+  colorwdiff with no args will print colored output with [--], {++} wrappers hidden,
+  break words at space/non-space boundaries, retain html tags as a word, displayed
+  in the same format as the input diff.
+\n";
+
+if (get_arg('-h')) {
+  print STDERR $USAGE;
+  exit;
+}
+
+my $COLORIZE = !get_arg('-nc');
+my $RETAIN_WRAPPERS = get_arg('-w');
+my $DIFF_STYLE_OUTPUT = 1;
+my $BREAK_AT_WORD_BOUNDARY = get_arg('-word');
+my $PRESERVE_HTML = !get_arg('-nohtml');
+my $SUPRESS_ARROWS = get_arg('-noarrows');
+my $DISPLAY_ET = get_arg('-et');
+
+my $rmv_st_seq = '[-';
+my $rmv_nd_seq = '-]';
+my $add_st_seq = '{+';
+my $add_nd_seq = '+}';
+
+my $clr_term = "\033[0m";
+
+my $clr_rmv_st_base = "\033[31m";
+my $clr_add_st_base = "\033[32m";
+
+my $clr_rmv_st = $clr_rmv_st_base;
+my $clr_rmv_nd = $clr_term;
+my $clr_add_st = $clr_add_st_base;
+my $clr_add_nd = $clr_term;
+
+## Alternate color scheme (experimental).
+if (0) {
+  $clr_rmv_st = "\033[47m\033[31m";
+  $clr_rmv_nd = "\033[0m";
+  $clr_add_st = "\033[100m\033[36m";
+  $clr_add_nd = "\033[0m";
+}
+
+my $clr_group_divider = "\033[33m";
+my $clr_intergroup_divider = "\033[33m";
+my $clr_group_line_numbers = "\033[36m";
+
+my $group_divider = '~~~~~~~~~~~~~~';
+my $intergroup_divider = '---';
+
+if ($COLORIZE) {
+  $group_divider = $clr_group_divider . $group_divider . $clr_term;
+  $intergroup_divider = $clr_intergroup_divider . $intergroup_divider . $clr_term;
+}
+
+if ($RETAIN_WRAPPERS) {
+  $clr_rmv_st .= $rmv_st_seq;
+  $clr_rmv_nd = $rmv_nd_seq . $clr_rmv_nd;
+  $clr_add_st .= $add_st_seq;
+  $clr_add_nd = $add_nd_seq . $clr_add_nd;
+}
+
+my $time = time();
+my @out_list = ();
+
+my $UNIFIED = 0;
+my $filestring_1 = '';
+my $filestring_2 = '';
+my $is_last_diff = 0;
+
+if (!(-t STDIN)) {
+  for my $line (<STDIN>) {
+    chomp $line;
+
+    if ($line =~ m/^\@\@/) {
+      $UNIFIED = 1;
+    }
+
+    if ($line =~ m@^---$@) {
+      # Suppress output for normal diff dividers, we handle those later.
+    } elsif ($line =~ m@^--- @) {
+      # Unified diff
+      print $clr_rmv_st_base . $line . $clr_term . "\n";
+    } elsif ($line =~ m@^\+\+\+ @) {
+      # Unified diff
+      print $clr_add_st_base . $line . $clr_term . "\n";
+    } elsif ($line =~ s@^< @@ || $line =~ s@^-@@) {
+      $filestring_1 .= $line . "\n";
+    } elsif ($line =~ s@^> @@ || $line =~ s@^\+@@) {
+      $filestring_2 .= $line . "\n";
+    } else {
+      if ($filestring_1 ne '' || $filestring_2 ne '') {
+        dump_diffs($filestring_1, $filestring_2);
+        $filestring_1 = '';
+        $filestring_2 = '';
+      }
+      if ($line =~ m/^[0-9]/ || $line =~ m/^\@\@/) {
+        #print $group_divider . "\n";
+        print $clr_group_line_numbers . $line . $clr_term . "\n";
+      } else {
+        print $line . "\n";
+      }
+    }
+  }
+
+  ## Dump the remaining diffs
+  if ($filestring_1 ne '' || $filestring_2 ne '') {
+    dump_diffs($filestring_1, $filestring_2);
+  }
+
+  if ($DISPLAY_ET) {
+    my $time_4sig = time() - $time + .005;
+    $time_4sig =~ s@^(.....).*@$1@;
+    print STDERR "\net:  ".$time_4sig."\n";
+  }
+
+  exit;
+}
+
+## If we're here, looks like user did not pipe in diff output; show usage.
+print STDERR $USAGE;
+
+exit;
+
+################################################################################
+################################################################################
+## SUBROUTINES
+
+sub prep_text_string {
+  my $ts = shift;
+
+  $ts =~ s@\n@\n__NEWLINE__\n@g;
+
+  if ($PRESERVE_HTML) {
+    my $str = $ts;
+    $str =~ s@>@>__SPRTR__@g;
+    $str =~ s@<@__SPRTR__<@g;
+    $ts = '';
+
+    for my $seg (split('__SPRTR__', $str)) {
+      if ($seg =~ m@^<@) {
+        $seg =~ s@<@__ATOMIC_TAG_OPEN__@;
+        $seg =~ s@>@__ATOMIC_TAG_CLOSE__@;
+        $seg =~ s@=@__ATOMIC_TAG_EQUALS__@g;
+        $seg =~ s@"@__ATOMIC_TAG_DBLQUO__@g;
+        $seg =~ s@'@__ATOMIC_TAG_SGLQUO__@g;
+        $seg =~ s@ @__ATOMIC_TAG_SPACE__@g;
+      }
+      $ts .= "\n" . $seg . "\n" ;
+    }
+  }
+
+  if ($BREAK_AT_WORD_BOUNDARY) {
+    $ts =~ s@\b@\n@g;
+  } else {
+    $ts =~ s@(\s)(\S)@$1\n$2@ga;
+    $ts =~ s@(\S)(\s)@$1\n$2@ga;
+  }
+
+  if ($PRESERVE_HTML) {
+    $ts =~ s@__ATOMIC_TAG_OPEN__@<@g;
+    $ts =~ s@__ATOMIC_TAG_CLOSE__@>@g;
+    $ts =~ s@__ATOMIC_TAG_EQUALS__@=@g;
+    $ts =~ s@__ATOMIC_TAG_DBLQUO__@"@g;
+    $ts =~ s@__ATOMIC_TAG_SGLQUO__@'@g;
+    $ts =~ s@__ATOMIC_TAG_SPACE__@ @g;
+  }
+
+  $ts =~ s@\n\n+@\n@g;
+
+  return $ts;
+}
+
+sub dump_diffs {
+  my $filestring_1 = shift;
+  my $filestring_2 = shift;
+
+  $filestring_1 = prep_text_string($filestring_1);
+  $filestring_2 = prep_text_string($filestring_2);
+
+  if (! open(FH, ">/tmp/diff_774885959483_1")) {
+      print "unable to open temporary file\n";
+  }
+  print FH "$filestring_1";
+  close (FH);
+
+  if (! open(FH, ">/tmp/diff_774885959483_2")) {
+      print "unable to open temporary file\n";
+  }
+  print FH "$filestring_2";
+  close (FH);
+
+  my $remove_flag = "< ";
+  my $add_flag = "> ";
+
+  if ($UNIFIED) {
+    $remove_flag = "-";
+    $add_flag = "+";
+  }
+
+  my $diff_out = `diff --new-line-format='__ADD_LINE__%L' --old-line-format='__REMOVE_LINE__%L' /tmp/diff_774885959483_1 /tmp/diff_774885959483_2`;
+
+  my $printstring = '';
+
+  for my $seg (split("\n", $diff_out)) {
+    if ($seg =~ s@^__REMOVE_LINE__@@) {
+      $seg =~ s@__NEWLINE__@\n@;
+      $seg = $rmv_st_seq . $seg . $rmv_nd_seq;
+    } elsif ($seg =~ s@^__ADD_LINE__@@) {
+      $seg =~ s@__NEWLINE__@\n@;
+      $seg = $add_st_seq . $seg . $add_nd_seq;
+    } elsif ($seg =~ m@^__NEWLINE__@) {
+      $seg = "\n";
+    }
+    $printstring .= $seg;
+  }
+
+  # Expand back-to-back common wrappers into single container, unless one
+  # wraps a newline.
+  $printstring =~ s@(?<!\n)-\]\[-(?!\n)@@g;
+  $printstring =~ s@(?<!\n)\+\}\{\+(?!\n)@@g;
+
+  if ($DIFF_STYLE_OUTPUT) {
+
+    my $string_remove = $printstring;
+    my $string_add = $printstring;
+
+    $string_remove =~ s@\{\+(?:(?!\+\}).)*\+\}@@sg;
+    $string_add =~ s@\[-(?:(?!-\]).)*-\]@@sg;
+
+    my $has_remove_string = $string_remove ne '';
+    my $has_add_string = $string_add ne '';
+
+    $string_remove =~ s@\[-\n-\]@\n@g;
+    $string_add =~ s@\{\+\n\+\}@\n@;
+
+    $string_remove =~ s@\[--\]@@g;
+    $string_add =~ s@\{\+\+\}@@;
+
+    if ($COLORIZE) {
+      $string_remove =~ s@\[-@$clr_rmv_st@g;
+      $string_remove =~ s@-\]@$clr_rmv_nd@g;
+      $string_add =~ s@\{\+@$clr_add_st@g;
+      $string_add =~ s@\+\}@$clr_add_nd@g;
+    }
+
+    if (!$SUPRESS_ARROWS || $UNIFIED) {
+      $string_remove =~ s@^@$remove_flag@;
+      $string_remove =~ s@\n@\n$remove_flag@g;
+      $string_add =~ s@^@$add_flag@;
+      $string_add =~ s@\n@\n$add_flag@g;
+
+      if ($UNIFIED) {
+        $string_remove =~ s@\n-([^\n]*)$@\n$1@;
+        $string_add =~ s@\n\+([^\n]*)$@\n$1@;
+      } else {
+        $string_remove =~ s@\n< ([^\n]*)$@\n$1@;
+        $string_add =~ s@\n> ([^\n]*)$@\n$1@;
+      }
+
+      if ($COLORIZE) {
+        if ($UNIFIED) {
+          $string_remove =~ s@^-@$clr_rmv_st-$clr_rmv_nd@;
+          $string_add =~ s@^\+@$clr_add_st+$clr_add_nd@;
+          $string_remove =~ s@\n-@\n$clr_rmv_st-$clr_rmv_nd@g;
+          $string_add =~ s@\n\+@\n$clr_add_st+$clr_add_nd@g;
+        } else {
+          my $rmv_rplcmnt = $clr_rmv_st_base . '<' . $clr_term;
+          my $add_rplcmnt = $clr_add_st_base . '>' . $clr_term;
+
+          $string_remove =~ s@^<@$rmv_rplcmnt@;
+          $string_add =~ s@^>@$add_rplcmnt@;
+          $string_remove =~ s@\n<@\n$rmv_rplcmnt@g;
+          $string_add =~ s@\n>@\n$add_rplcmnt@g;
+        }
+      }
+    }
+
+    if ($has_remove_string) {
+      print $string_remove;
+    }
+    if (!$UNIFIED && (($has_remove_string && $has_add_string) || $SUPRESS_ARROWS)) {
+      print $intergroup_divider . "\n";
+    }
+    if ($has_add_string) {
+      print $string_add;
+    }
+
+  } else {
+    if ($COLORIZE) {
+      if (!$RETAIN_WRAPPERS) {
+        $printstring =~ s@\[-\n-\]@__NEWLINE_WITH_REMOVE_WRAPPER__@g;
+        $printstring =~ s@\{\+\n\+\}@__NEWLINE_WITH_ADD_WRAPPER__@g;
+      }
+
+      $printstring =~ s@\[-@$clr_rmv_st@g;
+      $printstring =~ s@-\]@$clr_rmv_nd@g;
+      $printstring =~ s@\{\+@$clr_add_st@g;
+      $printstring =~ s@\+\}@$clr_add_nd@g;
+
+      if (!$RETAIN_WRAPPERS) {
+        my $remove_replacement =
+          $clr_rmv_st . '[-' .
+          $clr_rmv_nd . "\n" .
+          $clr_rmv_st . '-]' .
+          $clr_rmv_nd;
+
+        my $add_replacement =
+          $clr_add_st . '{+' .
+          $clr_add_nd . "\n" .
+          $clr_add_st . '+}' .
+          $clr_add_nd;
+
+        $printstring =~ s@__NEWLINE_WITH_REMOVE_WRAPPER__@$remove_replacement@g;
+        $printstring =~ s@__NEWLINE_WITH_ADD_WRAPPER__@$add_replacement@g;
+      }
+    }
+    print "------\n";
+    print $printstring;
+  }
+}
+
+sub get_arg {
+
+    my @a = @ARGV;
+    my $x;
+    my($needle, $mode) = @_;
+
+    while ($x = shift(@a)) {
+        if ($x eq $needle) {
+            if ($mode == 2) {
+                return shift(@a);
+            }else{
+                return 1;
+            }
+            last;
+        }
+    }
+    return 0;
+}
