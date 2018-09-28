@@ -37,7 +37,7 @@ Also unlike wdiff/cwdiff, colorwdiff is written in Perl.
 
 ### Installation:
 
-Download the [colorwdiff](https://raw.githubusercontent.com/Allasso/colorwdiff/master/colorwdiff) script and copy into a directory in your $PATH, such as /usr/local/bin/ or /opt/local/sbin or other variants.
+Download the [colorwdiff](https://raw.githubusercontent.com/Allasso/colorwdiff/master/colorwdiff) script and copy into a directory in your $PATH, such as /usr/local/bin/ or /opt/local/sbin or other variants.  Then make executable, for example:
 
     chmod u+x /opt/local/sbin/colorwdiff
 
