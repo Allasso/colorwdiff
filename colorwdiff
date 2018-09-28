@@ -18,7 +18,7 @@ my $USAGE = "  Usage:
   -nc         do not colorize, only show [--], {++} wrappers
   -w          retain [--], {++} wrappers when colorizing
   -word       break at word boundaries (default breaks at \\s\\S, \\S\\s boundaries)
-  -nohtml     don't treat html tags as atomic words (default does)
+  -nohtml     don't treat html tags autonomously (default does)
   -noarrows   suppress <, > flags when using normal diff (always prints file1|file2 divider)
   -et         display elapsed time when script exits
   -h          show this help menu and exit
