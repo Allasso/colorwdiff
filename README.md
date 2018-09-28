@@ -27,7 +27,7 @@ colorwdiff with no args will print colored output with [--], {++} wrappers hidde
 
 If the -nc option is passed, colorwdiff will not colorize, but will print the [--], {++} wrappers for post-processing such as formatting for HTML output.
 
-Like wdiff, a default "word" is either a series of space characters, or a series of non-space characters.  Using the -word option will break "words" at word boundaries.
+Like wdiff, a default "word" is either a series of space characters, or a series of non-space characters.  Using the -word option will break "words" at regex word boundaries.
 
 Apply options to diff for your application.
 
