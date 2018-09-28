@@ -33,6 +33,14 @@ Apply options to diff for your application.
 
 Unlike wdiff/cwdiff, which can be used as a wrapper for diff, colorwdiff is only used as a post-process treatment of diff output.  It will accept "normal" diff and unified diff outputs happily.  I have not experimented with the entire gambit of diff options to see what the effect will be on colorwdiff.
 
+Also unlike wdiff/cwdiff, colorwdiff is written in Perl.
+
+### Installation:
+
+Download the colorwdiff script and copy into a directory in your $PATH, such as /usr/local/bin/ or /opt/local/sbin or other variants.
+
+    chmod u+x /opt/local/sbin/colorwdiff
+
 ### Bugs
 
 Only a one or two innocuous ones (that I have seen) which I can't think of right now :-)
